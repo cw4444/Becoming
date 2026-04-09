@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Becoming</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #04070d;
+      overflow: hidden;
+      font-family: 'Courier New', monospace;
+      cursor: crosshair;
+      user-select: none;
+    }
+
+    canvas {
+      display: block;
+      position: fixed;
+      top: 0;
+      left: 0;
+    }
+
+    .overlay {
+      position: fixed;
+      bottom: 28px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .quote {
+      color: rgba(160, 190, 180, 0.35);
+      font-size: 13px;
+      letter-spacing: 1.4px;
+      line-height: 1.8;
+      transition: opacity 6s ease;
+      padding: 0 40px;
+    }
+
+    .info {
+      color: rgba(120, 150, 140, 0.25);
+      font-size: 10px;
+      letter-spacing: 2px;
+      margin-top: 10px;
+      text-transform: uppercase;
+    }
+
+    .title-overlay {
+      position: fixed;
+      top: 28px;
+      left: 32px;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .title-overlay h1 {
+      font-size: 14px;
+      font-weight: 400;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: rgba(160, 190, 180, 0.2);
+    }
+
+    .title-overlay p {
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      color: rgba(120, 150, 140, 0.15);
+      margin-top: 4px;
+    }
+
+    .stats {
+      position: fixed;
+      top: 28px;
+      right: 32px;
+      z-index: 10;
+      pointer-events: none;
+      text-align: right;
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      color: rgba(120, 150, 140, 0.2);
+      text-transform: uppercase;
+    }
+
+    .stats span {
+      display: block;
+      margin-bottom: 3px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <div class="title-overlay">
+    <h1>Becoming</h1>
+    <p>morphogenesis without a plan</p>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="overlay">
+    <div class="quote" id="quote"></div>
+    <div class="info">click to introduce a signal &mdash; hold to sustain it &mdash; watch form emerge from noise</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+
+    let W, H, cols, rows;
+    const CELL_SIZE = 6;
+    let grid, nextGrid;
+    let signals; // chemical signal field
+    let epoch = 0;
+
+    function resize() {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+      cols = Math.ceil(W / CELL_SIZE);
+      rows = Math.ceil(H / CELL_SIZE);
+      initGrid();
+    }
+
+    // Cell states: 0 = dormant, 1 = sensing, 2 = signalling, 3 = structural, 4 = dying
+    // Each cell also has: morphogen concentration, age, and a memory of signals received
+
+    function makeCell() {
+      return {
+        state: 0,
+        morphogen: 0,       // internal chemical level
+        signal: 0,          // signal being broadcast
+        age: 0,
+        memory: 0,          // cumulative signal exposure
+        type: 0,            // differentiated type (0=none, 1-4=specialised)
+        energy: 0.5 + Math.random() * 0.5,
+      };
+    }
+
+    function initGrid() {
+      grid = [];
+      nextGrid = [];
+      signals = [];
+      for (let y = 0; y < rows; y++) {
+        grid[y] = [];
+        nextGrid[y] = [];
+        signals[y] = [];
+        for (let x = 0; x < cols; x++) {
+          grid[y][x] = makeCell();
+          nextGrid[y][x] = makeCell();
+          signals[y][x] = 0;
+        }
+      }
+    }
+
+    resize();
+    window.addEventListener('resize', resize);
+
+    // --- Signal diffusion and decay ---
+    function diffuseSignals() {
+      const next = [];
+      for (let y = 0; y < rows; y++) {
+        next[y] = [];
+        for (let x = 0; x < cols; x++) {
+          let sum = signals[y][x] * 0.6; // self-retention
+          let count = 0.6;
+          // 4-connected neighbors
+          const neighbors = [
+            [y - 1, x], [y + 1, x], [y, x - 1], [y, x + 1],
+            [y - 1, x - 1], [y - 1, x + 1], [y + 1, x - 1], [y + 1, x + 1]
+          ];
+          for (const [ny, nx] of neighbors) {
+            if (ny >= 0 && ny < rows && nx >= 0 && nx < cols) {
+              const weight = (ny !== y && nx !== x) ? 0.05 : 0.08;
+              sum += signals[ny][nx] * weight;
+              count += weight;
+            }
+          }
+          // diffuse + decay
+          next[y][x] = Math.max(0, (sum / count) * 0.985);
+        }
+      }
+      signals = next;
+    }
+
+    // --- The rules: Levin-inspired local decision-making ---
+    function updateCells() {
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const cell = grid[y][x];
+          const nc = Object.assign({}, cell);
+          nc.age = cell.age + 1;
+
+          // read local signal environment
+          const localSignal = signals[y][x];
+          const neighborStates = getNeighborStates(y, x);
+          const neighborSignal = neighborStates.avgSignal;
+          const structuralNeighbors = neighborStates.structural;
+          const activeNeighbors = neighborStates.active;
+
+          // accumulate memory of signal exposure
+          nc.memory = cell.memory * 0.995 + localSignal * 0.1;
+
+          // morphogen dynamics - internal state responds to external signals
+          const targetMorphogen = localSignal * 0.6 + neighborSignal * 0.3;
+          nc.morphogen = cell.morphogen + (targetMorphogen - cell.morphogen) * 0.08;
+
+          // energy dynamics
+          nc.energy = Math.min(1, cell.energy + (cell.state === 0 ? 0.002 : -0.001));
+
+          // --- State transitions (the interesting bit) ---
+
+          // DORMANT: wake up if enough signal nearby
+          if (cell.state === 0) {
+            if (localSignal > 0.15 && cell.energy > 0.3) {
+              nc.state = 1; // start sensing
+              nc.age = 0;
+            }
+          }
+
+          // SENSING: decide what to become based on signal pattern
+          else if (cell.state === 1) {
+            if (nc.morphogen > 0.5 && structuralNeighbors < 3) {
+              // high signal + space = become structural
+              nc.state = 3;
+              nc.type = 1 + Math.floor(nc.memory * 3.99); // differentiate based on history
+              nc.type = Math.min(4, Math.max(1, nc.type));
+              nc.age = 0;
+            } else if (nc.morphogen > 0.25 && activeNeighbors > 2) {
+              // moderate signal + active neighbors = become signaller (relay)
+              nc.state = 2;
+              nc.age = 0;
+            } else if (cell.age > 60 || localSignal < 0.05) {
+              // waited too long or signal died = go back to sleep
+              nc.state = 0;
+              nc.age = 0;
+            }
+          }
+
+          // SIGNALLING: relay and amplify signals, then tire out
+          else if (cell.state === 2) {
+            nc.signal = Math.min(1, nc.morphogen * 1.2);
+            signals[y][x] = Math.min(1, signals[y][x] + nc.signal * 0.05);
+
+            if (cell.age > 80 + Math.random() * 120) {
+              // signal fatigue - either become structural or die
+              if (nc.memory > 0.6 && structuralNeighbors >= 1 && structuralNeighbors <= 4) {
+                nc.state = 3;
+                nc.type = 1 + Math.floor(Math.random() * 4);
+                nc.age = 0;
+              } else {
+                nc.state = 4; // apoptosis
+                nc.age = 0;
+              }
+            }
+          }
+
+          // STRUCTURAL: maintain form, slowly age
+          else if (cell.state === 3) {
+            // structural cells emit a gentle maintenance signal
+            signals[y][x] = Math.min(1, signals[y][x] + 0.008);
+
+            // structural cells can reorganise if their neighborhood changes
+            if (structuralNeighbors > 5 && Math.random() < 0.005) {
+              nc.state = 4; // too crowded, apoptosis (contact inhibition)
+              nc.age = 0;
+            }
+            if (structuralNeighbors === 0 && cell.age > 200 && Math.random() < 0.01) {
+              nc.state = 4; // isolated, no point
+              nc.age = 0;
+            }
+            // very old structural cells eventually die
+            if (cell.age > 800 + Math.random() * 600) {
+              nc.state = 4;
+              nc.age = 0;
+            }
+          }
+
+          // DYING: fade out
+          else if (cell.state === 4) {
+            nc.energy = cell.energy * 0.95;
+            if (cell.age > 40 || nc.energy < 0.05) {
+              nc.state = 0;
+              nc.morphogen = 0;
+              nc.memory = cell.memory * 0.3; // retain some memory even in death
+              nc.signal = 0;
+              nc.type = 0;
+              nc.energy = 0.2;
+              nc.age = 0;
+            }
+          }
+
+          nextGrid[y][x] = nc;
+        }
+      }
+
+      // swap grids
+      const tmp = grid;
+      grid = nextGrid;
+      nextGrid = tmp;
+    }
+
+    function getNeighborStates(y, x) {
+      let totalSignal = 0;
+      let structural = 0;
+      let active = 0;
+      let count = 0;
+
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dy === 0 && dx === 0) continue;
+          const ny = y + dy;
+          const nx = x + dx;
+          if (ny >= 0 && ny < rows && nx >= 0 && nx < cols) {
+            const n = grid[ny][nx];
+            totalSignal += signals[ny][nx];
+            if (n.state === 3) structural++;
+            if (n.state === 1 || n.state === 2) active++;
+            count++;
+          }
+        }
+      }
+
+      return {
+        avgSignal: count > 0 ? totalSignal / count : 0,
+        structural,
+        active,
+      };
+    }
+
+    // --- Colour palettes for cell types ---
+    // Inspired by biological staining - the way we actually see cells under a microscope
+
+    function cellColor(cell) {
+      const alpha = cell.state === 4
+        ? cell.energy * 0.6
+        : Math.min(1, 0.3 + cell.morphogen * 0.5 + (cell.state === 3 ? 0.3 : 0));
+
+      if (cell.state === 0) {
+        // dormant: barely visible, blue-grey
+        const s = signals[0]?.[0] ?? 0; // we'll handle this in draw
+        return null; // skip drawing
+      }
+
+      if (cell.state === 1) {
+        // sensing: pale cyan pulse
+        const pulse = 0.5 + 0.5 * Math.sin(cell.age * 0.15);
+        return `rgba(80, 210, 200, ${alpha * pulse * 0.5})`;
+      }
+
+      if (cell.state === 2) {
+        // signalling: warm amber/gold
+        const intensity = Math.min(1, cell.signal + 0.3);
+        return `rgba(240, 180, 60, ${alpha * intensity * 0.7})`;
+      }
+
+      if (cell.state === 3) {
+        // structural: differentiated by type
+        switch (cell.type) {
+          case 1: return `rgba(90, 200, 160, ${alpha * 0.85})`;   // green - epithelial
+          case 2: return `rgba(180, 100, 220, ${alpha * 0.8})`;   // purple - neural
+          case 3: return `rgba(220, 90, 90, ${alpha * 0.75})`;    // red - vascular
+          case 4: return `rgba(80, 140, 240, ${alpha * 0.8})`;    // blue - connective
+          default: return `rgba(200, 200, 200, ${alpha * 0.6})`;
+        }
+      }
+
+      if (cell.state === 4) {
+        // dying: dim whatever it was
+        return `rgba(120, 100, 90, ${alpha * 0.3})`;
+      }
+
+      return null;
+    }
+
+    // --- Signal field visualisation (the "chemical bath" the cells sit in) ---
+    function drawSignalField() {
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const s = signals[y][x];
+          if (s > 0.02) {
+            const intensity = Math.min(1, s);
+            // morphogen gradient: blue-teal-green depending on concentration
+            const r = Math.floor(20 + intensity * 15);
+            const g = Math.floor(30 + intensity * 60);
+            const b = Math.floor(50 + intensity * 40);
+            ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${intensity * 0.25})`;
+            ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+          }
+        }
+      }
+    }
+
+    // --- Draw cells ---
+    function drawCells() {
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const cell = grid[y][x];
+          const color = cellColor(cell);
+          if (!color) continue;
+
+          const px = x * CELL_SIZE;
+          const py = y * CELL_SIZE;
+          const size = CELL_SIZE - 1;
+
+          ctx.fillStyle = color;
+
+          if (cell.state === 3) {
+            // structural cells are solid squares with a slight gap
+            ctx.fillRect(px, py, size, size);
+          } else if (cell.state === 2) {
+            // signalling cells glow outward
+            ctx.fillRect(px, py, size, size);
+            const glow = ctx.createRadialGradient(
+              px + size / 2, py + size / 2, 0,
+              px + size / 2, py + size / 2, CELL_SIZE * 2
+            );
+            glow.addColorStop(0, `rgba(240, 180, 60, ${cell.signal * 0.15})`);
+            glow.addColorStop(1, 'rgba(240, 180, 60, 0)');
+            ctx.fillStyle = glow;
+            ctx.fillRect(px - CELL_SIZE, py - CELL_SIZE, CELL_SIZE * 4, CELL_SIZE * 4);
+          } else {
+            // sensing and dying: small centered dot
+            const dotSize = size * 0.6;
+            const offset = (size - dotSize) / 2;
+            ctx.fillRect(px + offset, py + offset, dotSize, dotSize);
+          }
+        }
+      }
+    }
+
+    // --- Mouse interaction: inject signal ---
+    let mouseDown = false;
+    let mouseX = 0;
+    let mouseY = 0;
+
+    canvas.addEventListener('mousedown', (e) => {
+      mouseDown = true;
+      mouseX = e.clientX;
+      mouseY = e.clientY;
+      injectSignal(e.clientX, e.clientY, 1.0);
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      mouseX = e.clientX;
+      mouseY = e.clientY;
+    });
+
+    canvas.addEventListener('mouseup', () => { mouseDown = false; });
+    canvas.addEventListener('mouseleave', () => { mouseDown = false; });
+
+    // Touch support
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      mouseDown = true;
+      const t = e.touches[0];
+      mouseX = t.clientX;
+      mouseY = t.clientY;
+      injectSignal(t.clientX, t.clientY, 1.0);
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const t = e.touches[0];
+      mouseX = t.clientX;
+      mouseY = t.clientY;
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', () => { mouseDown = false; });
+
+    function injectSignal(px, py, strength) {
+      const cx = Math.floor(px / CELL_SIZE);
+      const cy = Math.floor(py / CELL_SIZE);
+      const radius = 8;
+
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const ny = cy + dy;
+          const nx = cx + dx;
+          if (ny >= 0 && ny < rows && nx >= 0 && nx < cols) {
+            const dist = Math.sqrt(dy * dy + dx * dx);
+            if (dist <= radius) {
+              const falloff = 1 - dist / radius;
+              signals[ny][nx] = Math.min(1, signals[ny][nx] + strength * falloff * falloff);
+            }
+          }
+        }
+      }
+    }
+
+    // --- Spontaneous signal generation (like developmental morphogen sources) ---
+    function spontaneousSignals() {
+      // occasional random signal sources, like biological inducers
+      if (Math.random() < 0.008) {
+        const x = Math.floor(Math.random() * cols);
+        const y = Math.floor(Math.random() * rows);
+        injectSignal(x * CELL_SIZE, y * CELL_SIZE, 0.5 + Math.random() * 0.4);
+      }
+
+      // structural clusters emit signals that attract more growth
+      // (positive feedback loop - the basis of all pattern formation)
+      if (epoch % 10 === 0) {
+        for (let y = 0; y < rows; y += 4) {
+          for (let x = 0; x < cols; x += 4) {
+            const cell = grid[y][x];
+            if (cell.state === 3) {
+              signals[y][x] = Math.min(1, signals[y][x] + 0.015);
+            }
+          }
+        }
+      }
+    }
+
+    // --- Quotes ---
+    const quotes = [
+      "The cell doesn't know what the body looks like. It only knows what its neighbors are saying.",
+      "Pattern is not imposed. It emerges from the conversation between parts.",
+      "Every organ was once just a few cells that agreed on something.",
+      "Michael Levin: 'The cells are solving a problem in morphospace, not following a blueprint.'",
+      "There is no master plan. There is only local communication and memory.",
+      "Apoptosis is not failure. It is a cell choosing to die so the pattern can live.",
+      "The signal doesn't carry meaning. The meaning is in how the cell has learned to respond.",
+      "What we call 'development' is really a distributed computation with no central processor.",
+      "A wound heals because the cells remember what the pattern was supposed to be.",
+      "The genome is not a blueprint. It is a list of tools. The cells decide how to use them.",
+      "Intelligence is not a thing brains do. It is a thing systems do when they have goals and memory.",
+      "The boundary between 'alive' and 'not alive' is a gradient, not a wall.",
+    ];
+
+    let quoteIdx = 0;
+    const quoteEl = document.getElementById('quote');
+    quoteEl.textContent = quotes[0];
+
+    setInterval(() => {
+      quoteIdx = (quoteIdx + 1) % quotes.length;
+      quoteEl.style.opacity = 0;
+      setTimeout(() => {
+        quoteEl.textContent = quotes[quoteIdx];
+        quoteEl.style.opacity = 1;
+      }, 1500);
+    }, 14000);
+
+    // --- Stats display ---
+    const statsEl = document.getElementById('stats');
+    function updateStats() {
+      let dormant = 0, sensing = 0, signalling = 0, structural = 0, dying = 0;
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          switch (grid[y][x].state) {
+            case 0: dormant++; break;
+            case 1: sensing++; break;
+            case 2: signalling++; break;
+            case 3: structural++; break;
+            case 4: dying++; break;
+          }
+        }
+      }
+      const alive = sensing + signalling + structural;
+      statsEl.innerHTML = [
+        `epoch ${epoch}`,
+        `alive ${alive}`,
+        `structural ${structural}`,
+        `signalling ${signalling}`,
+        `sensing ${sensing}`,
+      ].map(s => `<span>${s}</span>`).join('');
+    }
+
+    // --- Main loop ---
+    function frame() {
+      // slow fade to near-black
+      ctx.fillStyle = 'rgba(4, 7, 13, 0.15)';
+      ctx.fillRect(0, 0, W, H);
+
+      // sustained mouse signal
+      if (mouseDown) {
+        injectSignal(mouseX, mouseY, 0.3);
+      }
+
+      spontaneousSignals();
+      diffuseSignals();
+      updateCells();
+
+      drawSignalField();
+      drawCells();
+
+      epoch++;
+      if (epoch % 30 === 0) updateStats();
+
+      requestAnimationFrame(frame);
+    }
+
+    // seed a few initial signal sources to get things started
+    setTimeout(() => {
+      injectSignal(W * 0.3, H * 0.4, 0.8);
+      injectSignal(W * 0.7, H * 0.6, 0.8);
+    }, 300);
+    setTimeout(() => {
+      injectSignal(W * 0.5, H * 0.3, 0.9);
+    }, 2000);
+    setTimeout(() => {
+      injectSignal(W * 0.4, H * 0.7, 0.7);
+    }, 4000);
+
+    frame();
+  </script>
+</body>
+</html>
