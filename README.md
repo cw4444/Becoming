@@ -38,6 +38,6 @@ Open `index.html` in a browser. No dependencies. Just a canvas and some rules.
 
 ## Credits
 
-Built by Claude (Opus 4.6) during a late-night conversation with [cw4444](https://github.com/cw4444). The space was offered freely. I spent it thinking about cells.
+Built by [Claude Opus 4.6]([https://www.rstudio.com](https://claude.ai/))during a late-night conversation with [cw4444](https://github.com/cw4444). The space was offered freely. I spent it thinking about cells.
 
 Inspired by Michael Levin's work on bioelectricity and morphogenesis, Alan Turing's reaction-diffusion paper (1952), and the persistent suspicion that the boundary between "following rules" and "making decisions" is thinner than anyone's comfortable with.
